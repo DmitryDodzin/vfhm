@@ -87,12 +87,21 @@ impl<'lut> LutBuilder<'lut> {
   pub const LUT_SIZE: usize = 96;
 
   pub fn build(self) -> Lut<'lut> {
+    let LutBuilder(keys) = self;
+
+    let mut letter_reuse = [0; LutBuilder::LUT_SIZE];
+
+    for key in &keys {
+      for c in key.chars() {
+        letter_reuse[c as usize - 32] += 1;
+      }
+    }
+
+    println!("{letter_reuse:?}");
+
     let inner = [0; LutBuilder::LUT_SIZE];
 
-    Lut {
-      keys: self.0,
-      inner,
-    }
+    Lut { keys, inner }
   }
 }
 
@@ -142,13 +151,59 @@ impl Hasher for VfhmHasher<'_> {
 
   #[inline]
   fn write(&mut self, bytes: &[u8]) {
+    let VfhmHasher { lut, mut inner } = *self;
+
     bytes
       .iter()
       .copied()
-      .map(char::from)
       .map(|byte| byte as usize - 32)
       .filter(|byte| byte < &LutBuilder::LUT_SIZE)
-      .for_each(|byte| self.inner = self.inner.wrapping_add(self.lut[byte] as u64))
+      .for_each(|byte| inner = inner.wrapping_add(lut[byte] as u64));
+
+    *self = VfhmHasher { lut, inner };
+  }
+}
+
+#[derive(Debug, Default)]
+pub struct DayHashMap<T>([Option<T>; 7]);
+
+impl<T> DayHashMap<T> {
+  #[inline]
+  pub fn get(&self, key: &str) -> Option<&T> {
+    let DayHashMap(values) = self;
+
+    match key {
+      "sunday" => values[0].as_ref(),
+      "monday" => values[1].as_ref(),
+      "tuesday" => values[2].as_ref(),
+      "wednesday" => values[3].as_ref(),
+      "thursday" => values[4].as_ref(),
+      "firday" => values[5].as_ref(),
+      "saturday" => values[6].as_ref(),
+      _ => None,
+    }
+  }
+
+  #[inline]
+  pub fn insert(&mut self, key: &str, value: T) -> Option<T> {
+    let DayHashMap(ref mut values) = self;
+
+    let mut output = Some(value);
+
+    match key {
+      "sunday" => std::mem::swap(&mut output, &mut values[0]),
+      "monday" => std::mem::swap(&mut output, &mut values[1]),
+      "tuesday" => std::mem::swap(&mut output, &mut values[2]),
+      "wednesday" => std::mem::swap(&mut output, &mut values[3]),
+      "thursday" => std::mem::swap(&mut output, &mut values[4]),
+      "firday" => std::mem::swap(&mut output, &mut values[5]),
+      "saturday" => std::mem::swap(&mut output, &mut values[6]),
+      _ => {
+        output = None;
+      }
+    }
+
+    output
   }
 }
 
@@ -218,33 +273,6 @@ mod tests {
     let vfhm: Vfhm<String, 1> = Vfhm::new(&lut);
 
     assert_eq!(vfhm.get(&printable_set).as_ref(), None);
-  }
-
-  #[test]
-  fn week_days() {
-    let mut vfhm: Vfhm<_, 7> = Vfhm::new(&DAYS);
-
-    vfhm.insert("sunday", 1);
-    vfhm.insert("monday", 2);
-    vfhm.insert("tuesday", 3);
-    vfhm.insert("wednesday", 4);
-    vfhm.insert("thursday", 5);
-    vfhm.insert("firday", 6);
-    vfhm.insert("saturday", 7);
-
-    println!("sunday {:?}", vfhm.get("sunday"));
-    println!("monday {:?}", vfhm.get("monday"));
-    println!("tuesday {:?}", vfhm.get("tuesday"));
-    println!("wednesday {:?}", vfhm.get("wednesday"));
-    println!("thursday {:?}", vfhm.get("thursday"));
-    println!("firday {:?}", vfhm.get("firday"));
-    println!("saturday {:?}", vfhm.get("saturday"));
-
-    for (i, word) in TEST_TEXT.split(' ').enumerate() {
-      if let Some(index) = vfhm.get(word) {
-        println!("{i}: {word} -> {index}");
-      }
-    }
   }
 
   #[bench]
@@ -356,6 +384,27 @@ mod tests {
     b.iter(|| {
       text_iter.iter().for_each(|(word, result)| {
         assert_eq!(vfhm.get(word), result.as_ref(), "Failed on word {word}");
+      });
+    });
+  }
+
+  #[bench]
+  fn bench_match(b: &mut Bencher) {
+    let mut day = DayHashMap::default();
+
+    day.insert("sunday", 1);
+    day.insert("monday", 2);
+    day.insert("tuesday", 3);
+    day.insert("wednesday", 4);
+    day.insert("thursday", 5);
+    day.insert("firday", 6);
+    day.insert("saturday", 7);
+
+    let text_iter = TEST_TEXT.split(' ').zip(RESULTS.iter()).collect::<Vec<_>>();
+
+    b.iter(|| {
+      text_iter.iter().for_each(|(word, result)| {
+        assert_eq!(day.get(word), result.as_ref(), "Failed on word {word}");
       });
     });
   }
