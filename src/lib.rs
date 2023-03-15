@@ -1,6 +1,10 @@
 #![feature(test)]
+#![feature(once_cell)]
 
-use std::ops::{Deref, DerefMut};
+use std::{
+  hash::Hasher,
+  ops::{Deref, DerefMut},
+};
 
 #[derive(Debug, Clone, Eq, PartialEq)]
 pub struct Vfhm<'lut, T, const SIZE: usize> {
@@ -16,13 +20,13 @@ impl<'lut, T, const SIZE: usize> Vfhm<'lut, T, SIZE> {
     }
   }
 
-  pub fn get<K: VfhmKey>(&self, key: K) -> &Option<T> {
+  pub fn get<K: VfhmKey>(&self, key: K) -> Option<&T> {
     let index = key.key_index(self.lut);
 
     if index < SIZE && key.is_same_key(self.lut.key(index)) {
-      &self.inner[index]
+      self.inner[index].as_ref()
     } else {
-      &None
+      None
     }
   }
 
@@ -118,17 +122,92 @@ impl DerefMut for Lut<'_> {
   }
 }
 
+#[derive(Debug)]
+pub struct VfhmHasher<'lut> {
+  lut: &'lut Lut<'lut>,
+  inner: u64,
+}
+
+impl<'lut> VfhmHasher<'lut> {
+  pub fn new(lut: &'lut Lut<'lut>) -> Self {
+    VfhmHasher { lut, inner: 0 }
+  }
+}
+
+impl Hasher for VfhmHasher<'_> {
+  #[inline]
+  fn finish(&self) -> u64 {
+    self.inner
+  }
+
+  #[inline]
+  fn write(&mut self, bytes: &[u8]) {
+    bytes
+      .iter()
+      .copied()
+      .map(char::from)
+      .map(|byte| byte as usize - 32)
+      .filter(|byte| byte < &LutBuilder::LUT_SIZE)
+      .for_each(|byte| self.inner = self.inner.wrapping_add(self.lut[byte] as u64))
+  }
+}
+
 #[cfg(test)]
 mod tests {
   extern crate test;
 
-  use std::collections::HashMap;
+  use std::{collections::HashMap, hash::BuildHasherDefault, sync::LazyLock};
 
   use test::Bencher;
 
   use super::*;
 
+  static DAYS: LazyLock<Lut<'static>> = LazyLock::new(|| {
+    let keys = vec![
+      "monday",
+      "sunday",
+      "tuesday",
+      "saturday",
+      "thursday",
+      "firday",
+      "wednesday",
+    ];
+    let mut lut = LutBuilder(keys).build();
+
+    lut['s' as usize - 32] = 1;
+    lut['t' as usize - 32] = 1;
+    lut['r' as usize - 32] = 1;
+    lut['h' as usize - 32] = 1;
+    lut['f' as usize - 32] = 4;
+    lut['w' as usize - 32] = 5;
+
+    lut
+  });
+
   const TEST_TEXT: &str = r#"monday is the first day of the week in many cultures, including the united states and canada. it's a busy day for most people as they begin their workweek and settle back into their routines. on tuesday many people continue their work, but others may have classes or meetings scheduled. wednesday is sometimes referred to as "hump day" because it's the middle of the workweek, and people start to look forward to the weekend. thursday are often a day for meetings and deadlines as people try to finish up their work before the end of the week. friday are a popular day for social events, happy hours, and winding down after a long workweek. saturday and sunday are usually reserved for relaxation, spending time with family and friends, and pursuing hobbies and interests. a hashtable can be a useful tool for keeping track of appointments, deadlines, and events on different days of the week."#;
+
+  static RESULTS: LazyLock<Vec<Option<i32>>> = LazyLock::new(|| {
+    let mut hashmap = HashMap::new();
+
+    hashmap.insert("sunday", 1);
+    hashmap.insert("monday", 2);
+    hashmap.insert("tuesday", 3);
+    hashmap.insert("wednesday", 4);
+    hashmap.insert("thursday", 5);
+    hashmap.insert("firday", 6);
+    hashmap.insert("saturday", 7);
+
+    TEST_TEXT
+      .split(' ')
+      .map(|word| hashmap.get(word).copied())
+      .collect()
+  });
+
+  impl Default for VfhmHasher<'_> {
+    fn default() -> Self {
+      Self::new(&DAYS)
+    }
+  }
 
   #[test]
   fn basic() {
@@ -143,25 +222,7 @@ mod tests {
 
   #[test]
   fn week_days() {
-    let keys = [
-      "monday",
-      "sunday",
-      "tuesday",
-      "saturday",
-      "thursday",
-      "firday",
-      "wednesday",
-    ];
-    let mut lut = LutBuilder(keys.to_vec()).build();
-
-    lut['s' as usize - 32] = 1;
-    lut['t' as usize - 32] = 1;
-    lut['r' as usize - 32] = 1;
-    lut['h' as usize - 32] = 1;
-    lut['f' as usize - 32] = 4;
-    lut['w' as usize - 32] = 5;
-
-    let mut vfhm: Vfhm<_, 7> = Vfhm::new(&lut);
+    let mut vfhm: Vfhm<_, 7> = Vfhm::new(&DAYS);
 
     vfhm.insert("sunday", 1);
     vfhm.insert("monday", 2);
@@ -187,39 +248,23 @@ mod tests {
   }
 
   #[bench]
-  fn bench_vfhm(b: &mut Bencher) {
-    let keys = [
-      "sunday",
-      "monday",
-      "tuesday",
-      "wednesday",
-      "thursday",
-      "firday",
-      "saturday",
-    ];
-    let mut lut = LutBuilder(keys.to_vec()).build();
+  fn bench_fnv(b: &mut Bencher) {
+    let mut fnvmap = fnv::FnvHashMap::default();
 
-    lut['s' as usize - 32] = 1;
-    lut['t' as usize - 32] = 1;
-    lut['r' as usize - 32] = 1;
-    lut['h' as usize - 32] = 1;
-    lut['f' as usize - 32] = 4;
-    lut['w' as usize - 32] = 5;
+    fnvmap.insert("sunday", 1);
+    fnvmap.insert("monday", 2);
+    fnvmap.insert("tuesday", 3);
+    fnvmap.insert("wednesday", 4);
+    fnvmap.insert("thursday", 5);
+    fnvmap.insert("firday", 6);
+    fnvmap.insert("saturday", 7);
 
-    let mut vfhm: Vfhm<_, 7> = Vfhm::new(&lut);
-
-    vfhm.insert("sunday", 1);
-    vfhm.insert("monday", 2);
-    vfhm.insert("tuesday", 3);
-    vfhm.insert("wednesday", 4);
-    vfhm.insert("thursday", 5);
-    vfhm.insert("firday", 6);
-    vfhm.insert("saturday", 7);
-
-    let mut text_iter = TEST_TEXT.split(' ').collect::<Vec<_>>().into_iter().cycle();
+    let text_iter = TEST_TEXT.split(' ').zip(RESULTS.iter()).collect::<Vec<_>>();
 
     b.iter(|| {
-      text_iter.next().map(|word| vfhm.get(word));
+      text_iter.iter().for_each(|(word, result)| {
+        assert_eq!(fnvmap.get(word), result.as_ref());
+      });
     });
   }
 
@@ -235,10 +280,12 @@ mod tests {
     hashmap.insert("firday", 6);
     hashmap.insert("saturday", 7);
 
-    let mut text_iter = TEST_TEXT.split(' ').collect::<Vec<_>>().into_iter().cycle();
+    let text_iter = TEST_TEXT.split(' ').zip(RESULTS.iter()).collect::<Vec<_>>();
 
     b.iter(|| {
-      text_iter.next().map(|word| hashmap.get(word));
+      text_iter.iter().for_each(|(word, result)| {
+        assert_eq!(hashmap.get(word), result.as_ref(), "Failed on word {word}");
+      });
     });
   }
 
@@ -254,10 +301,62 @@ mod tests {
         "saturday" => 7,
     };
 
-    let mut text_iter = TEST_TEXT.split(' ').collect::<Vec<_>>().into_iter().cycle();
+    let text_iter = TEST_TEXT.split(' ').zip(RESULTS.iter()).collect::<Vec<_>>();
 
     b.iter(|| {
-      text_iter.next().map(|word| KEYWORDS.get(word));
+      text_iter.iter().for_each(|(word, result)| {
+        assert_eq!(KEYWORDS.get(word), result.as_ref(), "Failed on word {word}");
+      });
+    });
+  }
+
+  #[bench]
+  fn bench_vfhm(b: &mut Bencher) {
+    let mut vfhm: Vfhm<_, 7> = Vfhm::new(&DAYS);
+
+    vfhm.insert("sunday", 1);
+    vfhm.insert("monday", 2);
+    vfhm.insert("tuesday", 3);
+    vfhm.insert("wednesday", 4);
+    vfhm.insert("thursday", 5);
+    vfhm.insert("firday", 6);
+    vfhm.insert("saturday", 7);
+
+    let text_iter = TEST_TEXT.split(' ').zip(RESULTS.iter()).collect::<Vec<_>>();
+
+    b.iter(|| {
+      text_iter
+        .iter()
+        .enumerate()
+        .for_each(|(index, (word, result))| {
+          assert_eq!(
+            vfhm.get(word),
+            result.as_ref(),
+            "Failed on word {word} at index {index}"
+          );
+        });
+    });
+  }
+
+  #[bench]
+  fn bench_vfhm_hasher(b: &mut Bencher) {
+    let mut vfhm: HashMap<&str, i32, _> =
+      HashMap::with_hasher(BuildHasherDefault::<VfhmHasher>::default());
+
+    vfhm.insert("sunday", 1);
+    vfhm.insert("monday", 2);
+    vfhm.insert("tuesday", 3);
+    vfhm.insert("wednesday", 4);
+    vfhm.insert("thursday", 5);
+    vfhm.insert("firday", 6);
+    vfhm.insert("saturday", 7);
+
+    let text_iter = TEST_TEXT.split(' ').zip(RESULTS.iter()).collect::<Vec<_>>();
+
+    b.iter(|| {
+      text_iter.iter().for_each(|(word, result)| {
+        assert_eq!(vfhm.get(word), result.as_ref(), "Failed on word {word}");
+      });
     });
   }
 }
