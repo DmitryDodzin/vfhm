@@ -1,17 +1,25 @@
 #![feature(test)]
 
+use std::ops::{Deref, DerefMut};
+
 #[derive(Debug, Clone, Eq, PartialEq)]
 pub struct Vfhm<'lut, T, const SIZE: usize> {
-  keys: &'lut [&'lut str],
-  lut: &'lut [usize],
+  lut: &'lut Lut<'lut>,
   inner: [Option<T>; SIZE],
 }
 
-impl<T, const SIZE: usize> Vfhm<'_, T, SIZE> {
+impl<'lut, T, const SIZE: usize> Vfhm<'lut, T, SIZE> {
+  pub fn new(lut: &'lut Lut<'lut>) -> Self {
+    Vfhm {
+      lut,
+      inner: [(); SIZE].map(|_| Option::<T>::default()),
+    }
+  }
+
   pub fn get<K: VfhmKey>(&self, key: K) -> &Option<T> {
     let index = key.key_index(self.lut);
 
-    if index < SIZE && key.is_same_key(self.keys[index]) {
+    if index < SIZE && key.is_same_key(self.lut.key(index)) {
       &self.inner[index]
     } else {
       &None
@@ -71,11 +79,42 @@ where
 
 pub struct LutBuilder<'lut>(pub Vec<&'lut str>);
 
-impl LutBuilder<'_> {
+impl<'lut> LutBuilder<'lut> {
   pub const LUT_SIZE: usize = 96;
 
-  pub fn build(self) -> [usize; LutBuilder::LUT_SIZE] {
-    [0; LutBuilder::LUT_SIZE]
+  pub fn build(self) -> Lut<'lut> {
+    let inner = [0; LutBuilder::LUT_SIZE];
+
+    Lut {
+      keys: self.0,
+      inner,
+    }
+  }
+}
+
+#[derive(Debug, Clone, Eq, PartialEq)]
+pub struct Lut<'lut> {
+  keys: Vec<&'lut str>,
+  inner: [usize; LutBuilder::LUT_SIZE],
+}
+
+impl Lut<'_> {
+  pub fn key(&self, index: usize) -> &str {
+    self.keys[index]
+  }
+}
+
+impl Deref for Lut<'_> {
+  type Target = [usize];
+
+  fn deref(&self) -> &Self::Target {
+    &self.inner
+  }
+}
+
+impl DerefMut for Lut<'_> {
+  fn deref_mut(&mut self) -> &mut Self::Target {
+    &mut self.inner
   }
 }
 
@@ -89,7 +128,7 @@ mod tests {
 
   use super::*;
 
-  const TEST_TEXT: &str = r#"monday is the first day of the week in many cultures, including the united states and canada. it's a busy day for most people as they begin their workweek and settle back into their routines. on tuesdays, many people continue their work, but others may have classes or meetings scheduled. wednesday is sometimes referred to as "hump day" because it's the middle of the workweek, and people start to look forward to the weekend. thursdays are often a day for meetings and deadlines as people try to finish up their work before the end of the week. fridays are a popular day for social events, happy hours, and winding down after a long workweek. saturdays and sundays are usually reserved for relaxation, spending time with family and friends, and pursuing hobbies and interests. a hashtable can be a useful tool for keeping track of appointments, deadlines, and events on different days of the week."#;
+  const TEST_TEXT: &str = r#"monday is the first day of the week in many cultures, including the united states and canada. it's a busy day for most people as they begin their workweek and settle back into their routines. on tuesday many people continue their work, but others may have classes or meetings scheduled. wednesday is sometimes referred to as "hump day" because it's the middle of the workweek, and people start to look forward to the weekend. thursday are often a day for meetings and deadlines as people try to finish up their work before the end of the week. friday are a popular day for social events, happy hours, and winding down after a long workweek. saturday and sunday are usually reserved for relaxation, spending time with family and friends, and pursuing hobbies and interests. a hashtable can be a useful tool for keeping track of appointments, deadlines, and events on different days of the week."#;
 
   #[test]
   fn basic() {
@@ -97,11 +136,7 @@ mod tests {
 
     let lut = LutBuilder(vec![&printable_set]).build();
 
-    let vfhm: Vfhm<String, 1> = Vfhm {
-      keys: &[&printable_set],
-      inner: [None],
-      lut: &lut,
-    };
+    let vfhm: Vfhm<String, 1> = Vfhm::new(&lut);
 
     assert_eq!(vfhm.get(&printable_set).as_ref(), None);
   }
@@ -126,11 +161,7 @@ mod tests {
     lut['f' as usize - 32] = 4;
     lut['w' as usize - 32] = 5;
 
-    let mut vfhm: Vfhm<_, 7> = Vfhm {
-      keys: &keys,
-      inner: [None; 7],
-      lut: &lut,
-    };
+    let mut vfhm: Vfhm<_, 7> = Vfhm::new(&lut);
 
     vfhm.insert("sunday", 1);
     vfhm.insert("monday", 2);
@@ -156,7 +187,7 @@ mod tests {
   }
 
   #[bench]
-  fn bench_vfhd(b: &mut Bencher) {
+  fn bench_vfhm(b: &mut Bencher) {
     let keys = [
       "sunday",
       "monday",
@@ -175,11 +206,7 @@ mod tests {
     lut['f' as usize - 32] = 4;
     lut['w' as usize - 32] = 5;
 
-    let mut vfhm: Vfhm<_, 7> = Vfhm {
-      keys: &keys,
-      inner: [None; 7],
-      lut: &lut,
-    };
+    let mut vfhm: Vfhm<_, 7> = Vfhm::new(&lut);
 
     vfhm.insert("sunday", 1);
     vfhm.insert("monday", 2);
