@@ -4,7 +4,7 @@ use std::{collections::HashMap, sync::LazyLock};
 
 use criterion::{black_box, criterion_group, criterion_main, BenchmarkId, Criterion};
 use fnv::FnvHashMap;
-use vfhm::{Lut, LutBuilder, Vfhm};
+use vfhm::r#match::{MatchMap, MatchMapMatcher};
 
 const TEST_TEXT: &str = r#"monday is the first day of the week in many cultures, including the united states and canada. it's a busy day for most people as they begin their workweek and settle back into their routines. on tuesday many people continue their work, but others may have classes or meetings scheduled. wednesday is sometimes referred to as "hump day" because it's the middle of the workweek, and people start to look forward to the weekend. thursday are often a day for meetings and deadlines as people try to finish up their work before the end of the week. friday are a popular day for social events, happy hours, and winding down after a long workweek. saturday and sunday are usually reserved for relaxation, spending time with family and friends, and pursuing hobbies and interests. a hashtable can be a useful tool for keeping track of appointments, deadlines, and events on different days of the week."#;
 
@@ -25,7 +25,7 @@ static TEXT_VALUES: LazyLock<Vec<(&str, Option<i32>)>> = LazyLock::new(|| {
     .collect()
 });
 
-static DAYS: LazyLock<Lut<'static>> = LazyLock::new(|| {
+static DAYS: LazyLock<vfhm::Lut<'static>> = LazyLock::new(|| {
   let keys = vec![
     "monday",
     "sunday",
@@ -35,7 +35,7 @@ static DAYS: LazyLock<Lut<'static>> = LazyLock::new(|| {
     "firday",
     "wednesday",
   ];
-  let mut lut = LutBuilder(keys).build();
+  let mut lut = vfhm::LutBuilder(keys).build();
 
   lut['s' as usize - 32] = 1;
   lut['t' as usize - 32] = 1;
@@ -90,7 +90,42 @@ impl<T> DayHashMap<T> {
   }
 }
 
+struct DaysMatcher;
+
+impl MatchMapMatcher for DaysMatcher {
+  type Key = &'static str;
+
+  fn keys() -> Vec<Self::Key> {
+    vec![
+      "sunday",
+      "monday",
+      "tuesday",
+      "wednesday",
+      "thursday",
+      "firday",
+      "saturday",
+    ]
+  }
+
+  #[inline]
+  fn match_key(key: &Self::Key) -> Option<usize> {
+    match *key {
+      "sunday" => Some(0),
+      "monday" => Some(1),
+      "tuesday" => Some(2),
+      "wednesday" => Some(3),
+      "thursday" => Some(4),
+      "firday" => Some(5),
+      "saturday" => Some(6),
+      _ => None,
+    }
+  }
+}
+
+type DaysMatchMap<V> = MatchMap<DaysMatcher, V>;
+
 fn bench_fnv(c: &mut Criterion) {
+  let _ = *TEXT_VALUES;
   let mut hashmap = FnvHashMap::default();
 
   hashmap.insert("sunday", 1);
@@ -113,6 +148,7 @@ fn bench_fnv(c: &mut Criterion) {
 }
 
 fn bench_hashmap(c: &mut Criterion) {
+  let _ = *TEXT_VALUES;
   let mut hashmap = HashMap::new();
 
   hashmap.insert("sunday", 1);
@@ -139,6 +175,7 @@ fn bench_hashmap(c: &mut Criterion) {
 }
 
 fn bench_match(c: &mut Criterion) {
+  let _ = *TEXT_VALUES;
   let mut hashmap = DayHashMap::default();
 
   hashmap.insert("sunday", 1);
@@ -159,8 +196,35 @@ fn bench_match(c: &mut Criterion) {
   });
 }
 
+fn bench_match2(c: &mut Criterion) {
+  let _ = *TEXT_VALUES;
+  let mut hashmap = DaysMatchMap::default();
+
+  hashmap.insert("sunday", 1);
+  hashmap.insert("monday", 2);
+  hashmap.insert("tuesday", 3);
+  hashmap.insert("wednesday", 4);
+  hashmap.insert("thursday", 5);
+  hashmap.insert("firday", 6);
+  hashmap.insert("saturday", 7);
+
+  c.bench_with_input(
+    BenchmarkId::new("match2", "days"),
+    &hashmap,
+    |b, hashmap| {
+      b.iter(|| {
+        let hashmap = black_box(hashmap);
+        TEXT_VALUES.iter().for_each(|(word, result)| {
+          assert_eq!(hashmap.get(word), result.as_ref(), "Failed on word {word}");
+        });
+      });
+    },
+  );
+}
+
 fn bench_vfhd(c: &mut Criterion) {
-  let mut hashmap: vfhm::Vfhm<'_, i32, 7> = Vfhm::new(&DAYS);
+  let _ = *TEXT_VALUES;
+  let mut hashmap = vfhm::Vfhm::<'_, i32, 7>::new(&DAYS);
 
   hashmap.insert("sunday", 1);
   hashmap.insert("monday", 2);
@@ -180,5 +244,45 @@ fn bench_vfhd(c: &mut Criterion) {
   });
 }
 
-criterion_group!(benches, bench_hashmap, bench_fnv, bench_match, bench_vfhd);
+fn bench_vfhd2(c: &mut Criterion) {
+  let _ = *TEXT_VALUES;
+  let keys = vec![
+    "sunday",
+    "monday",
+    "tuesday",
+    "wednesday",
+    "thursday",
+    "firday",
+    "saturday",
+  ];
+
+  let mut hashmap = vfhm::v2::Vfhm::new(vfhm::v2::find_seed(&keys), (6, 9));
+
+  hashmap.insert("sunday", 1);
+  hashmap.insert("monday", 2);
+  hashmap.insert("tuesday", 3);
+  hashmap.insert("wednesday", 4);
+  hashmap.insert("thursday", 5);
+  hashmap.insert("firday", 6);
+  hashmap.insert("saturday", 7);
+
+  c.bench_with_input(BenchmarkId::new("vfhm2", "days"), &hashmap, |b, hashmap| {
+    b.iter(|| {
+      let hashmap = black_box(hashmap);
+      TEXT_VALUES.iter().for_each(|(word, result)| {
+        assert_eq!(hashmap.get(*word), result.as_ref(), "Failed on word {word}");
+      });
+    });
+  });
+}
+
+criterion_group!(
+  benches,
+  bench_hashmap,
+  bench_fnv,
+  bench_match,
+  bench_match2,
+  bench_vfhd,
+  bench_vfhd2,
+);
 criterion_main!(benches);

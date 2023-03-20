@@ -1,5 +1,8 @@
 use std::ops::{Deref, DerefMut};
 
+pub mod r#match;
+pub mod v2;
+
 #[derive(Debug, Clone, Eq, PartialEq)]
 pub struct Vfhm<'lut, T, const SIZE: usize> {
   lut: &'lut Lut<'lut>,
