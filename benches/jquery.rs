@@ -4,6 +4,7 @@ use std::{collections::HashMap, sync::LazyLock};
 
 use criterion::{black_box, criterion_group, criterion_main, BenchmarkId, Criterion};
 use fnv::FnvHashMap;
+use vfhm::r#match::MatchMap;
 
 macro_rules! add_keywords {
   ($ident:ident) => {
@@ -70,6 +71,12 @@ static TEXT_VALUES: LazyLock<Vec<(&str, Option<i32>)>> = LazyLock::new(|| {
     .collect()
 });
 
+vfhm::match_map! { LinearMatcher<&'static str>[] }
+vfhm::match_map! { JqueryMatcher<&'static str>["await", "break", "case", "catch", "class", "const", "continue", "debugger", "default", "delete", "do", "else", "enum", "export", "extends", "false", "finally", "for", "function", "if", "implements", "import", "in", "instanceof", "interface", "let", "new", "null", "package", "private", "protected", "public", "return", "super", "switch", "static", "this", "throw", "try", "true", "typeof", "var", "void", "while", "with", "yield"] }
+
+type LinearMatchMap<V> = MatchMap<LinearMatcher, V>;
+type JqueryMatchMap<V> = MatchMap<JqueryMatcher, V>;
+
 fn bench_fnv(c: &mut Criterion) {
   let _ = *TEXT_VALUES;
   let mut hashmap = FnvHashMap::default();
@@ -108,6 +115,44 @@ fn bench_hashmap(c: &mut Criterion) {
   );
 }
 
+fn bench_linear(c: &mut Criterion) {
+  let mut hashmap = LinearMatchMap::new();
+
+  add_keywords!(hashmap);
+
+  c.bench_with_input(
+    BenchmarkId::new("linear", "jquery"),
+    &hashmap,
+    |b, hashmap| {
+      b.iter(|| {
+        let hashmap = black_box(hashmap);
+        TEXT_VALUES.iter().for_each(|(word, result)| {
+          assert_eq!(hashmap.get(word), result.as_ref(), "Failed on word {word}");
+        });
+      });
+    },
+  );
+}
+
+fn bench_match(c: &mut Criterion) {
+  let mut hashmap = JqueryMatchMap::new();
+
+  add_keywords!(hashmap);
+
+  c.bench_with_input(
+    BenchmarkId::new("match", "jquery"),
+    &hashmap,
+    |b, hashmap| {
+      b.iter(|| {
+        let hashmap = black_box(hashmap);
+        TEXT_VALUES.iter().for_each(|(word, result)| {
+          assert_eq!(hashmap.get(word), result.as_ref(), "Failed on word {word}");
+        });
+      });
+    },
+  );
+}
+
 fn bench_vfhd2(c: &mut Criterion) {
   let mut hashmap = HashMap::new();
 
@@ -133,5 +178,12 @@ fn bench_vfhd2(c: &mut Criterion) {
   );
 }
 
-criterion_group!(benches, bench_hashmap, bench_fnv, bench_vfhd2);
+criterion_group!(
+  benches,
+  bench_hashmap,
+  bench_fnv,
+  bench_linear,
+  bench_match,
+  bench_vfhd2
+);
 criterion_main!(benches);

@@ -4,7 +4,7 @@ use std::{collections::HashMap, sync::LazyLock};
 
 use criterion::{black_box, criterion_group, criterion_main, BenchmarkId, Criterion};
 use fnv::FnvHashMap;
-use vfhm::r#match::{MatchMap, MatchMapMatcher};
+use vfhm::r#match::MatchMap;
 
 const TEST_TEXT: &str = r#"monday is the first day of the week in many cultures, including the united states and canada. it's a busy day for most people as they begin their workweek and settle back into their routines. on tuesday many people continue their work, but others may have classes or meetings scheduled. wednesday is sometimes referred to as "hump day" because it's the middle of the workweek, and people start to look forward to the weekend. thursday are often a day for meetings and deadlines as people try to finish up their work before the end of the week. friday are a popular day for social events, happy hours, and winding down after a long workweek. saturday and sunday are usually reserved for relaxation, spending time with family and friends, and pursuing hobbies and interests. a hashtable can be a useful tool for keeping track of appointments, deadlines, and events on different days of the week."#;
 
@@ -89,39 +89,10 @@ impl<T> DayHashMap<T> {
     output
   }
 }
+vfhm::match_map! { LinearMatcher<&'static str>[] }
+vfhm::match_map! { DaysMatcher<&'static str>["sunday", "monday", "tuesday", "wednesday", "thursday", "firday", "saturday"] }
 
-struct DaysMatcher;
-
-impl MatchMapMatcher for DaysMatcher {
-  type Key = &'static str;
-
-  fn keys() -> Vec<Self::Key> {
-    vec![
-      "sunday",
-      "monday",
-      "tuesday",
-      "wednesday",
-      "thursday",
-      "firday",
-      "saturday",
-    ]
-  }
-
-  #[inline]
-  fn match_key(key: &Self::Key) -> Option<usize> {
-    match *key {
-      "sunday" => Some(0),
-      "monday" => Some(1),
-      "tuesday" => Some(2),
-      "wednesday" => Some(3),
-      "thursday" => Some(4),
-      "firday" => Some(5),
-      "saturday" => Some(6),
-      _ => None,
-    }
-  }
-}
-
+type LinearMatchMap<V> = MatchMap<LinearMatcher, V>;
 type DaysMatchMap<V> = MatchMap<DaysMatcher, V>;
 
 fn bench_fnv(c: &mut Criterion) {
@@ -222,6 +193,32 @@ fn bench_match2(c: &mut Criterion) {
   );
 }
 
+fn bench_linear(c: &mut Criterion) {
+  let _ = *TEXT_VALUES;
+  let mut hashmap = LinearMatchMap::default();
+
+  hashmap.insert("sunday", 1);
+  hashmap.insert("monday", 2);
+  hashmap.insert("tuesday", 3);
+  hashmap.insert("wednesday", 4);
+  hashmap.insert("thursday", 5);
+  hashmap.insert("firday", 6);
+  hashmap.insert("saturday", 7);
+
+  c.bench_with_input(
+    BenchmarkId::new("match_linear", "days"),
+    &hashmap,
+    |b, hashmap| {
+      b.iter(|| {
+        let hashmap = black_box(hashmap);
+        TEXT_VALUES.iter().for_each(|(word, result)| {
+          assert_eq!(hashmap.get(word), result.as_ref(), "Failed on word {word}");
+        });
+      });
+    },
+  );
+}
+
 fn bench_vfhd(c: &mut Criterion) {
   let _ = *TEXT_VALUES;
   let mut hashmap = vfhm::Vfhm::<'_, i32, 7>::new(&DAYS);
@@ -282,6 +279,7 @@ criterion_group!(
   bench_fnv,
   bench_match,
   bench_match2,
+  bench_linear,
   bench_vfhd,
   bench_vfhd2,
 );

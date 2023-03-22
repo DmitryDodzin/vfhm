@@ -8,6 +8,47 @@ pub trait MatchMapMatcher {
   fn match_key(key: &Self::Key) -> Option<usize>;
 }
 
+#[macro_export]
+macro_rules! match_map {
+  { $ident:ident <$ty:ty> [$($lit:literal),*] } => {
+    struct $ident;
+
+    impl vfhm::r#match::MatchMapMatcher for $ident {
+      type Key = $ty;
+
+      fn keys() -> Vec<Self::Key> {
+        vec![$($lit),*]
+      }
+
+      #[inline]
+      fn match_key(key: &Self::Key) -> Option<usize> {
+        vfhm::match_map_key!(key; 0; $($lit),*)
+      }
+    }
+  };
+}
+
+#[macro_export]
+macro_rules! match_map_key {
+  ($expr:expr; $curr:expr;) => {
+    None
+  };
+  ($expr:expr; $curr:expr; $lit:literal) => {
+    if let &$lit = $expr {
+      Some($curr)
+    } else {
+      None
+    }
+  };
+  ($expr:expr; $curr:expr; $lit:literal, $($rest:literal),*) => {
+    if let &$lit = $expr {
+        Some($curr)
+    } else {
+        vfhm::match_map_key! ($expr; $curr+1; $($rest),*)
+    }
+  };
+}
+
 pub struct MatchMap<M: MatchMapMatcher, V> {
   values: Vec<Option<V>>,
 
