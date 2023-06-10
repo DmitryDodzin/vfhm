@@ -1,52 +1,40 @@
-#![allow(dead_code)]
-#![allow(unused_variables)]
+use std::{borrow::Borrow, marker::PhantomData};
 
-use std::{borrow::Borrow, fmt, marker::PhantomData, mem};
+use crate::params::{VfhmConstParams, VfhmDefaultParams, VfhmParams};
 
-pub trait VfhmConstParams {
-  const SEED: usize;
-  const MASK: usize;
-  const MASK_OFFSET: usize;
-}
-
-#[derive(Debug, Clone, Copy)]
-pub struct VfhmParams(pub usize, pub usize, pub usize);
-
-impl<T> From<T> for VfhmParams
-where
-  T: VfhmConstParams,
-{
-  fn from(consts: T) -> Self {
-    VfhmParams(T::SEED, T::MASK, T::MASK_OFFSET)
-  }
-}
+pub mod builder;
+pub mod params;
 
 #[derive(Debug, Clone)]
-pub struct Vfhm<K, V> {
+pub struct Vfhm<K, V, CP = VfhmDefaultParams> {
   table: Vec<Option<(K, V)>>,
   params: VfhmParams,
+  _params_maker: PhantomData<CP>,
 }
 
-impl<K, V> Vfhm<K, V> {
-  pub fn new<P>(params: P) -> Self
+impl<K, V, CP> Vfhm<K, V, CP> {
+  pub fn new() -> Self
+  where
+    CP: VfhmConstParams,
+  {
+    Self::with_params(CP::into_params())
+  }
+
+  pub fn with_params<P>(maybe_params: P) -> Self
   where
     P: Into<VfhmParams>,
   {
-    let params = params.into();
-    let lenght = (params.1 >> params.2) + 1;
+    let params = maybe_params.into();
 
     Vfhm {
-      table: (0..lenght).map(|_| None).collect(),
+      table: (0..params.mask_size()).map(|_| None).collect(),
       params,
+      _params_maker: PhantomData::<CP>,
     }
-  }
-
-  pub fn builder() -> VfhmBuilder<K, V> {
-    VfhmBuilder::default()
   }
 }
 
-impl<K, V> Vfhm<K, V>
+impl<K, V, CP> Vfhm<K, V, CP>
 where
   K: VfhmKey,
 {
@@ -54,7 +42,9 @@ where
   where
     Q: Borrow<K>,
   {
-    let Vfhm { ref table, params } = *self;
+    let Vfhm {
+      ref table, params, ..
+    } = *self;
     let key = key.borrow();
 
     let index = key.table_key(params);
@@ -65,13 +55,11 @@ where
       .map(|(_, value)| value)
   }
 
-  pub fn insert(&mut self, key: K, value: V) -> Option<(K, V)>
-  where
-    V: fmt::Debug,
-  {
+  pub fn insert(&mut self, key: K, value: V) -> Option<(K, V)> {
     let Vfhm {
       ref mut table,
       params,
+      ..
     } = *self;
 
     let index = key.table_key(params);
@@ -81,6 +69,15 @@ where
     std::mem::swap(&mut output, &mut table[index]);
 
     output
+  }
+}
+
+impl<K, V, CP> Default for Vfhm<K, V, CP>
+where
+  CP: VfhmConstParams,
+{
+  fn default() -> Self {
+    Self::new()
   }
 }
 
@@ -105,101 +102,15 @@ where
   }
 
   fn table_key_compare(&self, other: &Self) -> bool {
-    !self
-      .as_ref()
-      .iter()
-      .zip(other.as_ref().iter())
-      .any(|(a, b)| a != b)
-  }
-}
-
-#[derive(Debug)]
-pub struct VfhmBuilder<K, V> {
-  keys: Vec<K>,
-  params: VfhmParams,
-  _values: PhantomData<V>,
-}
-
-impl<K, V> VfhmBuilder<K, V>
-where
-  K: AsRef<[u8]> + fmt::Debug,
-{
-  pub fn set_keys(&mut self, keys: Vec<K>) -> &mut Self {
-    self.keys = keys;
-
-    self
-  }
-
-  pub fn find_params(&mut self, max_iterations: usize) -> &mut Self {
-    for iteration in 0..max_iterations {
-      let mut map = Vfhm::new(self.params);
-
-      for (index, key) in self.keys.iter().enumerate() {
-        map.insert(key, index);
-      }
-
-      if self
-        .keys
-        .iter()
-        .enumerate()
-        .all(|(index, key)| map.get(key) == Some(&index))
-      {
-        break;
-      }
-
-      let VfhmParams(mut seed, mut mask, mut mask_offset) = self.params;
-
-      if seed == mask >> mask_offset {
-        seed = 0;
-
-        if mask_offset + ((1.0 + (mask >> mask_offset) as f64).sqrt() as usize) + 1
-          < mem::size_of::<usize>() * 8
-        {
-          mask <<= 1;
-          mask_offset += 1;
-        } else {
-          mask = (mask >> (mask_offset - 1)) | 1;
-          mask_offset = 0;
-        }
-      } else {
-        seed += 1;
-      }
-
-      self.params = VfhmParams(seed, mask, mask_offset);
-    }
-
-    self
-  }
-
-  pub fn build(&self) -> Vfhm<K, V> {
-    Vfhm::new(self.params)
-  }
-}
-
-impl<K, V> Default for VfhmBuilder<K, V> {
-  fn default() -> Self {
-    VfhmBuilder {
-      keys: Vec::new(),
-      params: VfhmParams(0, 0b11, 0),
-      _values: PhantomData::<V>,
-    }
-  }
-}
-
-impl<K, V> AsRef<Vec<K>> for VfhmBuilder<K, V> {
-  fn as_ref(&self) -> &Vec<K> {
-    &self.keys
-  }
-}
-
-impl<K, V> AsMut<Vec<K>> for VfhmBuilder<K, V> {
-  fn as_mut(&mut self) -> &mut Vec<K> {
-    &mut self.keys
+    self.as_ref() == other.as_ref()
   }
 }
 
 #[cfg(test)]
 mod tests {
+
+  use super::*;
+  use crate::{builder::VfhmBuilder, params::VfhmConstParams};
 
   struct DaysParams;
 
@@ -209,11 +120,9 @@ mod tests {
     const MASK_OFFSET: usize = 4;
   }
 
-  use super::*;
-
   #[test]
   fn builder() {
-    let mut hashmap = Vfhm::builder()
+    let mut hashmap = VfhmBuilder::default()
       .set_keys(vec![
         "sunday",
         "monday",
@@ -223,7 +132,7 @@ mod tests {
         "firday",
         "saturday",
       ])
-      .find_params(usize::MAX)
+      .find_params(1000)
       .build();
 
     hashmap.insert("sunday", 1);
@@ -245,7 +154,7 @@ mod tests {
 
   #[test]
   fn consts() {
-    let mut hashmap = Vfhm::new(DaysParams);
+    let mut hashmap = Vfhm::<_, _, DaysParams>::new();
 
     hashmap.insert("sunday", 1);
     hashmap.insert("monday", 2);
