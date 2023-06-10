@@ -36,7 +36,7 @@ where
         .enumerate()
         .all(|(index, key)| map.get(key) == Some(&index))
       {
-        break;
+        return self;
       }
 
       let VfhmParams(mut seed, mut mask, mut mask_offset) = self.params;
@@ -60,7 +60,7 @@ where
       self.params = VfhmParams(seed, mask, mask_offset);
     }
 
-    self
+    panic!("Max Interations passed no conflictless key found")
   }
 
   pub fn build(&self) -> Vfhm<K, V> {
