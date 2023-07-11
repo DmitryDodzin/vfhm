@@ -3,9 +3,9 @@ name = "vfhm"
 version = "0.1.0"
 edition = "2021"
 
-[[bench]]
-name = "days"
-harness = false
+[features]
+default = ["builder"]
+builder = []
 
 [[bench]]
 name = "jquery"

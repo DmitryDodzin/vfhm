@@ -4,7 +4,56 @@ use std::{collections::HashMap, sync::LazyLock};
 
 use criterion::{black_box, criterion_group, criterion_main, BenchmarkId, Criterion};
 use fnv::FnvHashMap;
-use vfhm::r#match::MatchMap;
+use vfhm::builder::VfhmBuilder;
+
+static PHF_KEYWORDS: phf::Map<&'static str, i32> = phf::phf_map! {
+  "await" => 1,
+  "break" => 2,
+  "case" => 3,
+  "catch" => 4,
+  "class" => 5,
+  "const" => 6,
+  "continue" => 7,
+  "debugger" => 8,
+  "default" => 9,
+  "delete" => 10,
+  "do" => 11,
+  "else" => 12,
+  "enum" => 13,
+  "export" => 14,
+  "extends" => 15,
+  "false" => 16,
+  "finally" => 17,
+  "for" => 18,
+  "function" => 19,
+  "if" => 20,
+  "implements" => 21,
+  "import" => 22,
+  "in" => 23,
+  "instanceof" => 24,
+  "interface" => 25,
+  "let" => 26,
+  "new" => 27,
+  "null" => 28,
+  "package" => 29,
+  "private" => 30,
+  "protected" => 31,
+  "public" => 32,
+  "return" => 33,
+  "super" => 34,
+  "switch" => 35,
+  "static" => 36,
+  "this" => 37,
+  "throw" => 38,
+  "try" => 39,
+  "true" => 40,
+  "typeof" => 41,
+  "var" => 42,
+  "void" => 43,
+  "while" => 44,
+  "with" => 45,
+  "yield" => 46,
+};
 
 macro_rules! add_keywords {
   ($ident:ident) => {
@@ -65,20 +114,15 @@ static TEXT_VALUES: LazyLock<Vec<(&str, Option<i32>)>> = LazyLock::new(|| {
   add_keywords!(hashmap);
 
   TEST_TEXT
-    .split(' ')
+    .split(|val: char| !val.is_alphabetic())
     .filter(|word| !word.is_empty())
     .map(|word| (word, hashmap.get(&word).copied()))
     .collect()
 });
 
-vfhm::match_map! { LinearMatcher<&'static str>[] }
-vfhm::match_map! { JqueryMatcher<&'static str>["await", "break", "case", "catch", "class", "const", "continue", "debugger", "default", "delete", "do", "else", "enum", "export", "extends", "false", "finally", "for", "function", "if", "implements", "import", "in", "instanceof", "interface", "let", "new", "null", "package", "private", "protected", "public", "return", "super", "switch", "static", "this", "throw", "try", "true", "typeof", "var", "void", "while", "with", "yield"] }
-
-type LinearMatchMap<V> = MatchMap<LinearMatcher, V>;
-type JqueryMatchMap<V> = MatchMap<JqueryMatcher, V>;
-
 fn bench_fnv(c: &mut Criterion) {
-  let _ = *TEXT_VALUES;
+  black_box(TEXT_VALUES.len());
+
   let mut hashmap = FnvHashMap::default();
 
   add_keywords!(hashmap);
@@ -94,8 +138,25 @@ fn bench_fnv(c: &mut Criterion) {
   });
 }
 
+fn bench_phf(c: &mut Criterion) {
+  black_box(TEXT_VALUES.len());
+
+  c.bench_function("phf/jquery", |b| {
+    b.iter(|| {
+      TEXT_VALUES.iter().for_each(|(word, result)| {
+        assert_eq!(
+          PHF_KEYWORDS.get(word),
+          result.as_ref(),
+          "Failed on word {word}"
+        );
+      });
+    });
+  });
+}
+
 fn bench_hashmap(c: &mut Criterion) {
-  let _ = *TEXT_VALUES;
+  black_box(TEXT_VALUES.len());
+
   let mut hashmap = HashMap::new();
 
   add_keywords!(hashmap);
@@ -115,17 +176,70 @@ fn bench_hashmap(c: &mut Criterion) {
   );
 }
 
-fn bench_linear(c: &mut Criterion) {
-  let mut hashmap = LinearMatchMap::new();
+fn bench_vfhm(c: &mut Criterion) {
+  println!("{}", black_box(TEXT_VALUES.len()));
+
+  let mut hashmap = VfhmBuilder::default()
+    .set_keys(vec![
+      "await",
+      "break",
+      "case",
+      "catch",
+      "class",
+      "const",
+      "continue",
+      "debugger",
+      "default",
+      "delete",
+      "do",
+      "else",
+      "enum",
+      "export",
+      "extends",
+      "false",
+      "finally",
+      "for",
+      "function",
+      "if",
+      "implements",
+      "import",
+      "in",
+      "instanceof",
+      "interface",
+      "let",
+      "new",
+      "null",
+      "package",
+      "private",
+      "protected",
+      "public",
+      "return",
+      "super",
+      "switch",
+      "static",
+      "this",
+      "throw",
+      "try",
+      "true",
+      "typeof",
+      "var",
+      "void",
+      "while",
+      "with",
+      "yield",
+    ])
+    .find_params(1_000_000)
+    .build();
 
   add_keywords!(hashmap);
 
   c.bench_with_input(
-    BenchmarkId::new("linear", "jquery"),
+    BenchmarkId::new("vfhm", "jquery"),
     &hashmap,
     |b, hashmap| {
       b.iter(|| {
         let hashmap = black_box(hashmap);
+
         TEXT_VALUES.iter().for_each(|(word, result)| {
           assert_eq!(hashmap.get(word), result.as_ref(), "Failed on word {word}");
         });
@@ -134,56 +248,5 @@ fn bench_linear(c: &mut Criterion) {
   );
 }
 
-fn bench_match(c: &mut Criterion) {
-  let mut hashmap = JqueryMatchMap::new();
-
-  add_keywords!(hashmap);
-
-  c.bench_with_input(
-    BenchmarkId::new("match", "jquery"),
-    &hashmap,
-    |b, hashmap| {
-      b.iter(|| {
-        let hashmap = black_box(hashmap);
-        TEXT_VALUES.iter().for_each(|(word, result)| {
-          assert_eq!(hashmap.get(word), result.as_ref(), "Failed on word {word}");
-        });
-      });
-    },
-  );
-}
-
-fn bench_vfhd2(c: &mut Criterion) {
-  let mut hashmap = HashMap::new();
-
-  add_keywords!(hashmap);
-
-  let keys: Vec<_> = hashmap.keys().collect();
-
-  let mut hashmap = vfhm::v2::Vfhm::new(vfhm::v2::find_seed(&keys), (2, 10));
-
-  add_keywords!(hashmap);
-
-  c.bench_with_input(
-    BenchmarkId::new("vfhm2", "jquery"),
-    &hashmap,
-    |b, hashmap| {
-      b.iter(|| {
-        let hashmap = black_box(hashmap);
-        TEXT_VALUES.iter().for_each(|(word, result)| {
-          assert_eq!(hashmap.get(*word), result.as_ref(), "Failed on word {word}");
-        });
-      });
-    },
-  );
-}
-
-criterion_group!(
-  benches,
-  bench_hashmap,
-  bench_fnv,
-  bench_linear,
-  bench_match,
-  bench_vfhd2
-);
+criterion_group!(benches, bench_hashmap, bench_fnv, bench_phf, bench_vfhm);
 criterion_main!(benches);
