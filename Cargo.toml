@@ -4,7 +4,8 @@ version = "0.1.0"
 edition = "2021"
 
 [features]
-default = []
+default = ["builder"]
+builder = []
 
 [[bench]]
 name = "jquery"
@@ -13,4 +14,4 @@ harness = false
 [dev-dependencies]
 criterion = { version = "0.4", features = ["html_reports"] }
 fnv = "1"
-
+phf = { version = "0.11", features = ["macros"] }

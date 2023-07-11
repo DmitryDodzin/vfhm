@@ -1,25 +1,17 @@
-use std::{borrow::Borrow, marker::PhantomData};
+use std::borrow::Borrow;
 
-use crate::params::{VfhmConstParams, VfhmDefaultParams, VfhmParams};
-
+#[cfg(feature = "builder")]
 pub mod builder;
-pub mod params;
+pub mod r#static;
 
 #[derive(Debug, Clone)]
-pub struct Vfhm<K, V, CP = VfhmDefaultParams> {
+pub struct Vfhm<K, V> {
   table: Vec<Option<(K, V)>>,
   params: VfhmParams,
-  _params_maker: PhantomData<CP>,
+  length: usize,
 }
 
-impl<K, V, CP> Vfhm<K, V, CP> {
-  pub fn new() -> Self
-  where
-    CP: VfhmConstParams,
-  {
-    Self::with_params(CP::into_params())
-  }
-
+impl<K, V> Vfhm<K, V> {
   pub fn with_params<P>(maybe_params: P) -> Self
   where
     P: Into<VfhmParams>,
@@ -29,15 +21,30 @@ impl<K, V, CP> Vfhm<K, V, CP> {
     Vfhm {
       table: (0..params.mask_size()).map(|_| None).collect(),
       params,
-      _params_maker: PhantomData::<CP>,
+      length: 0,
     }
   }
 }
 
-impl<K, V, CP> Vfhm<K, V, CP>
+impl<K, V> Vfhm<K, V>
 where
   K: VfhmKey,
 {
+  pub fn len(&self) -> usize {
+    self.length
+  }
+
+  pub fn is_empty(&self) -> bool {
+    self.length == 0
+  }
+
+  pub fn contains_key<Q>(&self, key: Q) -> bool
+  where
+    Q: Borrow<K>,
+  {
+    self.params.bound_check(key.borrow()) && self.get(key).is_some()
+  }
+
   pub fn get<Q>(&self, key: Q) -> Option<&V>
   where
     Q: Borrow<K>,
@@ -46,6 +53,10 @@ where
       ref table, params, ..
     } = *self;
     let key = key.borrow();
+
+    if !self.params.bound_check(key) {
+      return None;
+    }
 
     let index = key.table_key(params);
 
@@ -68,20 +79,64 @@ where
 
     std::mem::swap(&mut output, &mut table[index]);
 
+    if output.is_none() {
+      self.length += 1;
+    }
+
+    output
+  }
+
+  pub fn remove<Q>(&mut self, key: K) -> Option<(K, V)>
+  where
+    Q: Borrow<K>,
+  {
+    let Vfhm {
+      ref mut table,
+      params,
+      ..
+    } = *self;
+
+    let index = key.table_key(params);
+
+    let mut output = None;
+
+    std::mem::swap(&mut output, &mut table[index]);
+
+    if output.is_some() {
+      self.length -= 1;
+    }
+
     output
   }
 }
 
-impl<K, V, CP> Default for Vfhm<K, V, CP>
-where
-  CP: VfhmConstParams,
-{
-  fn default() -> Self {
-    Self::new()
+#[derive(Debug, Clone, Copy)]
+pub struct VfhmParams(pub usize, pub usize, pub usize, pub (usize, usize));
+
+impl VfhmParams {
+  pub fn mask_size(&self) -> usize {
+    let VfhmParams(_, mask, mask_offset, _) = *self;
+    (mask >> mask_offset) + 1
+  }
+
+  pub fn bounds_mut(&mut self) -> &mut (usize, usize) {
+    &mut self.3
+  }
+
+  pub fn bound_check<K>(&self, key: &K) -> bool
+  where
+    K: VfhmKey,
+  {
+    let (lower, upper) = self.3;
+    let len = key.key_len();
+
+    lower <= len && len <= upper
   }
 }
 
 pub trait VfhmKey {
+  fn key_len(&self) -> usize;
+
   fn table_key(&self, params: VfhmParams) -> usize;
 
   fn table_key_compare(&self, other: &Self) -> bool;
@@ -91,7 +146,12 @@ impl<T> VfhmKey for T
 where
   T: AsRef<[u8]>,
 {
-  fn table_key(&self, VfhmParams(seed, mask, mask_offset): VfhmParams) -> usize {
+  #[inline]
+  fn key_len(&self) -> usize {
+    self.as_ref().len()
+  }
+
+  fn table_key(&self, VfhmParams(seed, mask, mask_offset, _): VfhmParams) -> usize {
     let mut index: usize = 1;
 
     for byte in self.as_ref() {
@@ -101,6 +161,7 @@ where
     (index & mask) >> mask_offset
   }
 
+  #[inline]
   fn table_key_compare(&self, other: &Self) -> bool {
     self.as_ref() == other.as_ref()
   }
@@ -109,16 +170,21 @@ where
 #[cfg(test)]
 mod tests {
 
-  use super::*;
-  use crate::{builder::VfhmBuilder, params::VfhmConstParams};
+  use crate::{
+    builder::VfhmBuilder,
+    r#static::{StaticVfhm, VfhmStaticMap},
+  };
 
   struct DaysParams;
 
-  impl VfhmConstParams for DaysParams {
+  impl VfhmStaticMap for DaysParams {
     const SEED: usize = 1;
     const MASK: usize = 112;
     const MASK_OFFSET: usize = 4;
+    const BONDS: (usize, usize) = (6, 9);
   }
+
+  type DaysMap<K, V> = StaticVfhm<K, V, DaysParams>;
 
   #[test]
   fn builder() {
@@ -154,7 +220,7 @@ mod tests {
 
   #[test]
   fn consts() {
-    let mut hashmap = Vfhm::<_, _, DaysParams>::new();
+    let mut hashmap = DaysMap::new();
 
     hashmap.insert("sunday", 1);
     hashmap.insert("monday", 2);
