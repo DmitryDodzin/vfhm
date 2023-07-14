@@ -16,3 +16,4 @@ harness = false
 criterion = { version = "0.4", features = ["html_reports"] }
 fnv = "1"
 phf = { version = "0.11", features = ["macros"] }
+reqwest = { version = "0.11", features = ["blocking"] }

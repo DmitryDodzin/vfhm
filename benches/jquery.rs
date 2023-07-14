@@ -106,9 +106,14 @@ macro_rules! add_keywords {
   };
 }
 
-const TEST_TEXT: &str = include_str!("./jquery-3.6.4.js");
+static TEST_TEXT: LazyLock<String> = LazyLock::new(|| {
+  reqwest::blocking::get("https://code.jquery.com/jquery-3.7.0.js")
+    .unwrap()
+    .text()
+    .unwrap()
+});
 
-static TEXT_VALUES: LazyLock<Vec<(&str, Option<i32>)>> = LazyLock::new(|| {
+static TEXT_VALUES: LazyLock<Vec<(String, Option<i32>)>> = LazyLock::new(|| {
   let mut hashmap = HashMap::new();
 
   add_keywords!(hashmap);
@@ -116,7 +121,7 @@ static TEXT_VALUES: LazyLock<Vec<(&str, Option<i32>)>> = LazyLock::new(|| {
   TEST_TEXT
     .split(|val: char| !val.is_alphabetic())
     .filter(|word| !word.is_empty())
-    .map(|word| (word, hashmap.get(&word).copied()))
+    .map(|word| (word.to_string(), hashmap.get(&word).copied()))
     .collect()
 });
 
@@ -132,7 +137,11 @@ fn bench_fnv(c: &mut Criterion) {
       let hashmap = black_box(hashmap);
 
       TEXT_VALUES.iter().for_each(|(word, result)| {
-        assert_eq!(hashmap.get(word), result.as_ref(), "Failed on word {word}");
+        assert_eq!(
+          hashmap.get(word.as_str()),
+          result.as_ref(),
+          "Failed on word {word}"
+        );
       });
     });
   });
@@ -169,7 +178,11 @@ fn bench_hashmap(c: &mut Criterion) {
         let hashmap = black_box(hashmap);
 
         TEXT_VALUES.iter().for_each(|(word, result)| {
-          assert_eq!(hashmap.get(word), result.as_ref(), "Failed on word {word}");
+          assert_eq!(
+            hashmap.get(word.as_str()),
+            result.as_ref(),
+            "Failed on word {word}"
+          );
         });
       });
     },
@@ -241,7 +254,11 @@ fn bench_vfhm(c: &mut Criterion) {
         let hashmap = black_box(hashmap);
 
         TEXT_VALUES.iter().for_each(|(word, result)| {
-          assert_eq!(hashmap.get(word), result.as_ref(), "Failed on word {word}");
+          assert_eq!(
+            hashmap.get(word.as_str()),
+            result.as_ref(),
+            "Failed on word {word}"
+          );
         });
       });
     },
